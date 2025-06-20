@@ -76,6 +76,11 @@ class ContentRepository extends Repository
     public function findPageBySlug($slug, $storageId): string
     {
         $queryBuilder = GeneralUtility::makeInstance(ConnectionPool::class)->getQueryBuilderForTable('pages');
+        // Remove all restrictions first
+        $queryBuilder->getRestrictions()->removeAll();
+        // Add back only the deleted restriction to exclude deleted pages
+        $queryBuilder->getRestrictions()->add(GeneralUtility::makeInstance(\TYPO3\CMS\Core\Database\Query\Restriction\DeletedRestriction::class));
+        
         return $queryBuilder
             ->select('uid')
             ->from('pages')
