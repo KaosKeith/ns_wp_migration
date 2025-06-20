@@ -112,4 +112,43 @@ class ContentRepository extends Repository
         
         return $affectedRows > 0;
     }
+
+    /**
+     * Update page slug for hierarchical URL structure
+     * @param int $pageId
+     * @param string $slug
+     * @return bool
+     */
+    public function updatePageSlug(int $pageId, string $slug): bool
+    {
+        $queryBuilder = GeneralUtility::makeInstance(ConnectionPool::class)->getQueryBuilderForTable('pages');
+        $affectedRows = $queryBuilder
+            ->update('pages')
+            ->where(
+                $queryBuilder->expr()->eq('uid', $queryBuilder->createNamedParameter($pageId, \PDO::PARAM_INT))
+            )
+            ->set('slug', $slug)
+            ->set('tstamp', time())
+            ->executeStatement();
+        
+        return $affectedRows > 0;
+    }
+
+    /**
+     * Get page data by ID
+     * @param int $pageId
+     * @return array|false
+     */
+    public function getPageById(int $pageId): array|false
+    {
+        $queryBuilder = GeneralUtility::makeInstance(ConnectionPool::class)->getQueryBuilderForTable('pages');
+        return $queryBuilder
+            ->select('uid', 'pid', 'title', 'slug')
+            ->from('pages')
+            ->where(
+                $queryBuilder->expr()->eq('uid', $queryBuilder->createNamedParameter($pageId, \PDO::PARAM_INT))
+            )
+            ->executeQuery()
+            ->fetchAssociative();
+    }
 }

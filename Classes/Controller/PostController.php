@@ -306,6 +306,9 @@ class PostController extends AbstractController
         // Second pass: Build page tree structure based on post_parent relationships
         $this->buildPageTree($data, $wpIdToTypo3IdMap, $storageId);
 
+        // Third pass: Build hierarchical slugs after page tree is established
+        $this->buildHierarchicalSlugs($data, $wpIdToTypo3IdMap, $storageId);
+
         $logManager->setTotalSuccess($success);
         $logManager->setTotalFails($fails);
         $logManager->setTotalUpdate($updatedRecords);
@@ -372,6 +375,103 @@ class PostController extends AbstractController
                 ]);
             }
         }
+    }
+
+    /**
+     * Build hierarchical slugs for pages based on their tree structure
+     * @param array $data
+     * @param array $wpIdToTypo3IdMap
+     * @param int $storageId
+     * @return void
+     */
+    protected function buildHierarchicalSlugs(array $data, array $wpIdToTypo3IdMap, int $storageId): void
+    {
+        // Store WordPress data for easy lookup
+        $wpDataMap = [];
+        foreach ($data as $pageItem) {
+            if (isset($pageItem['ID'])) {
+                $wpDataMap[$pageItem['ID']] = $pageItem;
+            }
+        }
+
+        // Process each page to build hierarchical slugs
+        foreach ($data as $pageItem) {
+            if (!isset($pageItem['ID']) || !isset($wpIdToTypo3IdMap[$pageItem['ID']]) || 
+                !isset($pageItem['post_status']) || $pageItem['post_status'] === 'trash') {
+                continue;
+            }
+
+            $wpId = $pageItem['ID'];
+            $typo3PageId = $wpIdToTypo3IdMap[$wpId];
+            
+            // Build the hierarchical slug path
+            $hierarchicalSlug = $this->buildSlugPath($pageItem, $wpDataMap, $storageId);
+            
+            // Update the page slug if it's different from the current one
+            if ($hierarchicalSlug !== '/' . $this->getPageSlug($pageItem)) {
+                try {
+                    $this->contentRepository->updatePageSlug($typo3PageId, $hierarchicalSlug);
+                } catch (\Exception $e) {
+                    $this->logger->error('Failed to update page slug', [
+                        'wp_id' => $wpId,
+                        'typo3_page_id' => $typo3PageId,
+                        'hierarchical_slug' => $hierarchicalSlug,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+        }
+    }
+
+    /**
+     * Build the full slug path for a page based on its hierarchy
+     * @param array $pageItem
+     * @param array $wpDataMap
+     * @param int $storageId
+     * @return string
+     */
+    protected function buildSlugPath(array $pageItem, array $wpDataMap, int $storageId): string
+    {
+        $slugParts = [];
+        $currentPage = $pageItem;
+        
+        // Start with the current page's slug
+        $slug = $this->getPageSlug($currentPage);
+        array_unshift($slugParts, $slug);
+        
+        // Traverse up the hierarchy to build the path
+        while ($currentPage && isset($currentPage['post_parent']) && $currentPage['post_parent'] != '0') {
+            // Move to parent page
+            $parentId = $currentPage['post_parent'];
+            if (isset($wpDataMap[$parentId])) {
+                $currentPage = $wpDataMap[$parentId];
+                // Get the parent page's slug and add it to the beginning
+                $parentSlug = $this->getPageSlug($currentPage);
+                array_unshift($slugParts, $parentSlug);
+            } else {
+                // Parent not found, break the loop
+                break;
+            }
+        }
+        
+        // Build the final hierarchical slug
+        return '/' . implode('/', $slugParts);
+    }
+
+    /**
+     * Get the slug for a page item
+     * @param array $pageItem
+     * @return string
+     */
+    protected function getPageSlug(array $pageItem): string
+    {
+        if (isset($pageItem['post_name']) && !empty($pageItem['post_name'])) {
+            return $pageItem['post_name'];
+        }
+        
+        // Fallback to generating slug from title
+        $slugString = preg_replace('/[^A-Za-z0-9 ]/', '', $pageItem['post_title']);
+        return strtolower(str_replace(' ', '-', $slugString));
     }
 
     /**
