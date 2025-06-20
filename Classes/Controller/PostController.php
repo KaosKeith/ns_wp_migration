@@ -229,6 +229,11 @@ class PostController extends AbstractController
         $logManager = GeneralUtility::makeInstance(LogManage::class);
         $logManager->setPid($storageId);
         $logManager->setNumberOfRecords($numberOfRecords);
+        
+        // Store mapping of WordPress ID to TYPO3 page ID for building page tree
+        $wpIdToTypo3IdMap = [];
+        
+        // First pass: Create all pages without parent relationships
         foreach ($data as $pageItem) {
             // Validate Pages Items First
             if($pageItem['post_title']) {
@@ -253,7 +258,7 @@ class PostController extends AbstractController
                     'hidden' => 0,
                     'tstamp' => time(),
                     'crdate' => $formattedDate ? strtotime($formattedDate) : time(),
-                    'pid' => $storageId,
+                    'pid' => $storageId, // Initially set all pages under storage root
                     'slug' => '/'.$slug,
                     'sys_language_uid' => 0,
                     'doktype' => 1
@@ -274,7 +279,12 @@ class PostController extends AbstractController
                         $success++;
                     }
 
-                    // post content crete
+                    // Store the mapping of WordPress ID to TYPO3 page ID
+                    if (isset($pageItem['ID']) && $recordId) {
+                        $wpIdToTypo3IdMap[$pageItem['ID']] = $recordId;
+                    }
+
+                    // post content create
                     if (isset($pageItem['post_content']) && !empty($pageItem['post_content'])) {
                         $htmlContent = $this->processPostContentHtml($pageItem);
                         $contentElements = ['pid' => $recordId,
@@ -293,6 +303,9 @@ class PostController extends AbstractController
             }
         }
 
+        // Second pass: Build page tree structure based on post_parent relationships
+        $this->buildPageTree($data, $wpIdToTypo3IdMap, $storageId);
+
         $logManager->setTotalSuccess($success);
         $logManager->setTotalFails($fails);
         $logManager->setTotalUpdate($updatedRecords);
@@ -306,6 +319,59 @@ class PostController extends AbstractController
         $response['message'] = $massage;
         $response['result'] = true;
         return $response;
+    }
+
+    /**
+     * Build page tree structure based on WordPress parent-child relationships
+     * @param array $data
+     * @param array $wpIdToTypo3IdMap
+     * @param int $storageId
+     * @return void
+     */
+    protected function buildPageTree(array $data, array $wpIdToTypo3IdMap, int $storageId): void
+    {
+        foreach ($data as $pageItem) {
+            // Skip if page doesn't have required fields or is trash
+            if (!isset($pageItem['ID']) || !isset($pageItem['post_parent']) || 
+                !isset($pageItem['post_status']) || $pageItem['post_status'] === 'trash') {
+                continue;
+            }
+
+            $wpId = $pageItem['ID'];
+            $wpParentId = $pageItem['post_parent'];
+
+            // Skip if this page wasn't successfully created or has no parent
+            if (!isset($wpIdToTypo3IdMap[$wpId]) || empty($wpParentId) || $wpParentId == '0') {
+                continue;
+            }
+
+            // Check if parent exists in our mapping
+            if (isset($wpIdToTypo3IdMap[$wpParentId])) {
+                $typo3PageId = $wpIdToTypo3IdMap[$wpId];
+                $typo3ParentId = $wpIdToTypo3IdMap[$wpParentId];
+
+                // Update the page's parent ID
+                try {
+                    $this->contentRepository->updatePageParent($typo3PageId, $typo3ParentId);
+                } catch (\Exception $e) {
+                    // Log error but continue processing other pages
+                    $this->logger->error('Failed to update page tree structure', [
+                        'wp_id' => $wpId,
+                        'wp_parent_id' => $wpParentId,
+                        'typo3_page_id' => $typo3PageId,
+                        'typo3_parent_id' => $typo3ParentId,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            } else {
+                // Parent page doesn't exist in our mapping - log this for debugging
+                $this->logger->warning('Parent page not found in mapping', [
+                    'wp_id' => $wpId,
+                    'wp_parent_id' => $wpParentId,
+                    'page_title' => $pageItem['post_title'] ?? 'Unknown'
+                ]);
+            }
+        }
     }
 
     /**

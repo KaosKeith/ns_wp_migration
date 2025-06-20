@@ -86,4 +86,25 @@ class ContentRepository extends Repository
             ->executeQuery()
             ->fetchOne();
     }
+
+    /**
+     * Update page parent ID for building page tree structure
+     * @param int $pageId
+     * @param int $parentId
+     * @return bool
+     */
+    public function updatePageParent(int $pageId, int $parentId): bool
+    {
+        $queryBuilder = GeneralUtility::makeInstance(ConnectionPool::class)->getQueryBuilderForTable('pages');
+        $affectedRows = $queryBuilder
+            ->update('pages')
+            ->where(
+                $queryBuilder->expr()->eq('uid', $queryBuilder->createNamedParameter($pageId, \PDO::PARAM_INT))
+            )
+            ->set('pid', $parentId)
+            ->set('tstamp', time())
+            ->executeStatement();
+        
+        return $affectedRows > 0;
+    }
 }
