@@ -235,6 +235,10 @@ class PostController extends AbstractController
                 // Creating Pages
                 $slugString = preg_replace('/[^A-Za-z0-9 ]/', '', $pageItem['post_title']);
                 $slug = strtolower(str_replace(' ', '-', $slugString));
+                if($pageItem['post_name'] && !empty($pageItem['post_name'])) {
+                    $slug = $pageItem['post_name'];
+                }
+
                 $postDate = explode(" ", $pageItem['post_date']);
                 if(isset($postDate[0])){
                     $date = \DateTime::createFromFormat('d/m/y', $postDate[0]);
