@@ -90,6 +90,15 @@
 			<trans-unit id="placeholder.StorageFolder">
 				<source>Insert Storage Page Id</source>
 			</trans-unit>
+			<trans-unit id="label.fileadminFolder">
+				<source>Custom Fileadmin Folder</source>
+			</trans-unit>
+			<trans-unit id="placeholder.fileadminFolder">
+				<source>e.g., fileadmin/wp_migration/ (leave empty for default: fileadmin/user_upload/)</source>
+			</trans-unit>
+			<trans-unit id="help.fileadminFolder">
+				<source>Specify a custom folder path where migrated images will be stored. If left empty, images will be stored in the default 'fileadmin/user_upload/' folder.</source>
+			</trans-unit>
 			<trans-unit id="extensionconfiguration.mediapath">
 				<source>Media Storage Path</source>
 			</trans-unit>

@@ -14,6 +14,11 @@
             <f:form.textfield name="storageId" id="storage_id" type="number" class="form-control" additionalAttributes="{required:'true'}" placeholder="{f:translate(key: 'placeholder.StorageFolder')}" />
         </div>
         <div class="form-group">
+            <label for="fileadmin_folder"><f:translate key="label.fileadminFolder" /></label>
+            <f:form.textfield name="fileadminFolder" id="fileadmin_folder" class="form-control" placeholder="{f:translate(key: 'placeholder.fileadminFolder')}" />
+            <small class="form-text text-muted"><f:translate key="help.fileadminFolder" /></small>
+        </div>
+        <div class="form-group">
             <f:form.submit class="btn btn-gray" id="submit_import" value="{f:translate(key:'form.submitButton')}" />
             <f:link.action action="downloadSample" controller="Post" class="btn btn-gray"><f:translate key="download.samplefile" /></f:link.action>
         </div>

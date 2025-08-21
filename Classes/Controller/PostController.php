@@ -128,7 +128,8 @@ class PostController extends AbstractController
             $response = $this->importCsvData(
                 $fileArray,
                 $requestData['postType'],
-                (int)$requestData['storageId']
+                (int)$requestData['storageId'],
+                $requestData['fileadminFolder'] ?? ''
             );
         } else {
             $massage = LocalizationUtility::translate('error.pageId', 'ns_wp_migration');
@@ -167,9 +168,10 @@ class PostController extends AbstractController
      * @param array $file
      * @param string $dockType
      * @param int $storageId
+     * @param string $customFileadminFolder
      * @return int
      */
-    public function importCsvData(array $file, string $dockType, int $storageId): int
+    public function importCsvData(array $file, string $dockType, int $storageId, string $customFileadminFolder = ''): int
     {
         if ($this->checkValideFile($file)) {
             $handle = fopen($file['tmp_name'], 'r');
@@ -182,7 +184,7 @@ class PostController extends AbstractController
             }
 
             if (is_array($data) && isset($data[1], $data[1]['post_title'], $data[1]['post_type'])) {
-                $this->createPagesAndBlog($data, $storageId, $dockType);
+                $this->createPagesAndBlog($data, $storageId, $dockType, $customFileadminFolder);
                 return 1;
             } else {
                 $massage = LocalizationUtility::translate('error.invalidfileData', 'ns_wp_migration');
@@ -209,9 +211,10 @@ class PostController extends AbstractController
      * @param array $data
      * @param int $storageId
      * @param string $dockType
+     * @param string $customFileadminFolder
      * @return array
      */
-    public function createPagesAndBlog(array $data, int $storageId, string $dockType): array
+    public function createPagesAndBlog(array $data, int $storageId, string $dockType, string $customFileadminFolder = ''): array
     {
         $response = [];
         $numberOfRecords = count($data);
@@ -284,7 +287,7 @@ class PostController extends AbstractController
 
                     // post content create
                     if (isset($pageItem['post_content']) && !empty($pageItem['post_content'])) {
-                        $htmlContent = $this->processPostContentHtml($pageItem);
+                        $htmlContent = $this->processPostContentHtml($pageItem, $customFileadminFolder);
                         $contentType = $this->detectContentType($pageItem['post_content']);
                         $contentElements = [
                             'pid' => $recordId,
@@ -586,9 +589,10 @@ class PostController extends AbstractController
     /**
      * Process data and return post types array
      * @param array $data
+     * @param string $customFileadminFolder
      * @return string
      */
-    public function processPostContentHtml(array $data): string
+    public function processPostContentHtml(array $data, string $customFileadminFolder = ''): string
     {
         $config = HTMLPurifier_Config::createDefault();
         $config->set('AutoFormat.RemoveEmpty', true); // remove empty tag pairs
@@ -614,18 +618,64 @@ class PostController extends AbstractController
                 // Get the value of the src attribute
                 $src = $img->getAttribute('src');
                 if ($src) {
-                    $fileName = basename($src);
-                    $folder = 'fileadmin/user_upload/';
+                    // Parse the URL to get the path
+                    $parsedUrl = parse_url($src);
+                    $srcPath = $parsedUrl['path'] ?? '';
+
+                    // Extract the relative path from the source URL
+                    // This preserves the directory structure
+                    $fileName = basename($srcPath);
+                    $relativePath = dirname($srcPath);
+
+                    // Clean up the relative path (remove leading slashes, etc.)
+                    $relativePath = trim($relativePath, '/');
+                    if ($relativePath === '.' || $relativePath === '') {
+                        $relativePath = '';
+                    } else {
+                        $relativePath = $relativePath . '/';
+                    }
+
+                    // Determine the folder to use - custom or default
+                    if (!empty($customFileadminFolder)) {
+                        // Clean up the custom folder path
+                        $customFolder = trim($customFileadminFolder, '/');
+                        if (!str_starts_with($customFolder, 'fileadmin/')) {
+                            $customFolder = 'fileadmin/' . $customFolder;
+                        }
+                        $baseFolder = rtrim($customFolder, '/') . '/';
+                        $folder = $baseFolder . $relativePath;
+                        $storageFolder = str_replace('fileadmin/', '', $baseFolder);
+                        $storageFolder = trim($storageFolder, '/');
+                        $storageSubFolder = $storageFolder . '/' . $relativePath;
+                        $storageSubFolder = trim($storageSubFolder, '/');
+                    } else {
+                        // Use default folder
+                        $baseFolder = 'fileadmin/user_upload/';
+                        $folder = $baseFolder . $relativePath;
+                        $storageFolder = 'user_upload';
+                        $storageSubFolder = $storageFolder . '/' . $relativePath;
+                        $storageSubFolder = trim($storageSubFolder, '/');
+                    }
+
                     $dstFolder = Environment::getPublicPath() . '/' . $folder;
                     if (!file_exists($dstFolder)) {
                         GeneralUtility::mkdir_deep($dstFolder);
                     }
                     $out = file_get_contents($src);
-                    file_put_contents($dstFolder . '/' . $fileName, $out);
+                    file_put_contents($dstFolder . $fileName, $out);
+
                     // Get TYPO3 file storage
                     $fileStorage = $resourceFactory->getDefaultStorage();
-                    $folder = $fileStorage->getFolder('user_upload');
-                    $fileObject = $fileStorage->getFileInFolder($fileName, $folder);
+
+                    // Try to get the folder, create if it doesn't exist
+                    try {
+                        $folderObject = $fileStorage->getFolder($storageSubFolder);
+                    } catch (\Exception $e) {
+                        // Create the folder structure if it doesn't exist
+                        $folderObject = $fileStorage->createFolder($storageSubFolder);
+                    }
+
+                    $fileObject = $fileStorage->getFileInFolder($fileName, $folderObject);
                     $properties = $fileObject->getProperties();
 
                     // Get the accessible URL of the file
