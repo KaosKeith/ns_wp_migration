@@ -85,7 +85,6 @@ class PostController extends AbstractController
             $view->assignMultiple($assign);
             return $view->renderResponse();
         }
-
     }
 
     /**
@@ -121,7 +120,7 @@ class PostController extends AbstractController
         }
 
         if ($this->pageRepository->getPage($requestData['storageId'])) {
-            if((GeneralUtility::makeInstance(Typo3Version::class))->getMajorVersion() < 12) {
+            if ((GeneralUtility::makeInstance(Typo3Version::class))->getMajorVersion() < 12) {
                 $fileArray = $requestData['dataFile'];
             } else {
                 $fileArray = $_FILES['dataFile'];
@@ -143,7 +142,7 @@ class PostController extends AbstractController
             }
         }
 
-        if($response === 0) {
+        if ($response === 0) {
             if ((GeneralUtility::makeInstance(Typo3Version::class))->getMajorVersion() < 12) {
                 $response = $this->redirect('import');
             } else {
@@ -173,17 +172,16 @@ class PostController extends AbstractController
     public function importCsvData(array $file, string $dockType, int $storageId): int
     {
         if ($this->checkValideFile($file)) {
-
             $handle = fopen($file['tmp_name'], 'r');
-            $columns = fgetcsv($handle, 10000, ",");
+            $columns = fgetcsv($handle, 500000, ",", "\"", "");
             $record = 1;
             $data = [];
-            while (($row = fgetcsv($handle, 10000, ",")) !== false) {
+            while (($row = fgetcsv($handle, 500000, ",", "\"", "")) !== false) {
                 $data[$record] = array_combine($columns, $row);
                 $record++;
             }
 
-            if(is_array($data) && isset($data[1], $data[1]['post_title'], $data[1]['post_type'])) {
+            if (is_array($data) && isset($data[1], $data[1]['post_title'], $data[1]['post_type'])) {
                 $this->createPagesAndBlog($data, $storageId, $dockType);
                 return 1;
             } else {
@@ -229,25 +227,25 @@ class PostController extends AbstractController
         $logManager = GeneralUtility::makeInstance(LogManage::class);
         $logManager->setPid($storageId);
         $logManager->setNumberOfRecords($numberOfRecords);
-        
+
         // Store mapping of WordPress ID to TYPO3 page ID for building page tree
         $wpIdToTypo3IdMap = [];
-        
+
         // First pass: Create all pages without parent relationships
         foreach ($data as $pageItem) {
             // Validate Pages Items First
-            if($pageItem['post_title']) {
+            if ($pageItem['post_title']) {
                 // Creating Pages
                 $slugString = preg_replace('/[^A-Za-z0-9 ]/', '', $pageItem['post_title']);
                 $slug = strtolower(str_replace(' ', '-', $slugString));
-                if($pageItem['post_name'] && !empty($pageItem['post_name'])) {
+                if ($pageItem['post_name'] && !empty($pageItem['post_name'])) {
                     $slug = $pageItem['post_name'];
                 }
 
                 $postDate = explode(" ", $pageItem['post_date']);
-                if(isset($postDate[0])){
+                if (isset($postDate[0])) {
                     $date = \DateTime::createFromFormat('d/m/y', $postDate[0]);
-                    if($date) {
+                    if ($date) {
                         $formattedDate = $date->format('Y-m-d');
                     } else {
                         $formattedDate = date($postDate[0]);
@@ -259,7 +257,7 @@ class PostController extends AbstractController
                     'tstamp' => time(),
                     'crdate' => $formattedDate ? strtotime($formattedDate) : time(),
                     'pid' => $storageId, // Initially set all pages under storage root
-                    'slug' => '/'.$slug,
+                    'slug' => '/' . $slug,
                     'sys_language_uid' => 0,
                     'doktype' => 1
                 ];
@@ -269,8 +267,8 @@ class PostController extends AbstractController
                 }
 
                 if (isset($pageItem['post_status']) && $pageItem['post_status'] != 'trash') {
-                    $existingRecordId = $this->contentRepository->findPageBySlug('/'.$slug, $storageId);
-                    if($existingRecordId) {
+                    $existingRecordId = $this->contentRepository->findPageBySlug('/' . $slug, $storageId);
+                    if ($existingRecordId) {
                         $recordId = $this->contentRepository->updatePageRecord($pageData, $existingRecordId);
                         $updatedRecords++;
                     } else {
@@ -287,14 +285,17 @@ class PostController extends AbstractController
                     // post content create
                     if (isset($pageItem['post_content']) && !empty($pageItem['post_content'])) {
                         $htmlContent = $this->processPostContentHtml($pageItem);
-                        $contentElements = ['pid' => $recordId,
-                                            'hidden' => 0,
-                                            'tstamp' => time(),
-                                            'crdate' => time(),
-                                            'CType' => 'text',
-                                            'bodytext' => $htmlContent,
-                                            'colPos' => 0,
-                                            'sectionIndex' => 1];
+                        $contentType = $this->detectContentType($pageItem['post_content']);
+                        $contentElements = [
+                            'pid' => $recordId,
+                            'hidden' => 0,
+                            'tstamp' => time(),
+                            'crdate' => time(),
+                            'CType' => $contentType,
+                            'bodytext' => $htmlContent,
+                            'colPos' => 0,
+                            'sectionIndex' => 1
+                        ];
                         $this->contentRepository->insertContnetElements($contentElements);
                     }
                 }
@@ -335,8 +336,10 @@ class PostController extends AbstractController
     {
         foreach ($data as $pageItem) {
             // Skip if page doesn't have required fields or is trash
-            if (!isset($pageItem['ID']) || !isset($pageItem['post_parent']) || 
-                !isset($pageItem['post_status']) || $pageItem['post_status'] === 'trash') {
+            if (
+                !isset($pageItem['ID']) || !isset($pageItem['post_parent']) ||
+                !isset($pageItem['post_status']) || $pageItem['post_status'] === 'trash'
+            ) {
                 continue;
             }
 
@@ -396,17 +399,19 @@ class PostController extends AbstractController
 
         // Process each page to build hierarchical slugs
         foreach ($data as $pageItem) {
-            if (!isset($pageItem['ID']) || !isset($wpIdToTypo3IdMap[$pageItem['ID']]) || 
-                !isset($pageItem['post_status']) || $pageItem['post_status'] === 'trash') {
+            if (
+                !isset($pageItem['ID']) || !isset($wpIdToTypo3IdMap[$pageItem['ID']]) ||
+                !isset($pageItem['post_status']) || $pageItem['post_status'] === 'trash'
+            ) {
                 continue;
             }
 
             $wpId = $pageItem['ID'];
             $typo3PageId = $wpIdToTypo3IdMap[$wpId];
-            
+
             // Build the hierarchical slug path
             $hierarchicalSlug = $this->buildSlugPath($pageItem, $wpDataMap, $storageId);
-            
+
             // Update the page slug if it's different from the current one
             if ($hierarchicalSlug !== '/' . $this->getPageSlug($pageItem)) {
                 try {
@@ -434,11 +439,11 @@ class PostController extends AbstractController
     {
         $slugParts = [];
         $currentPage = $pageItem;
-        
+
         // Start with the current page's slug
         $slug = $this->getPageSlug($currentPage);
         array_unshift($slugParts, $slug);
-        
+
         // Traverse up the hierarchy to build the path
         while ($currentPage && isset($currentPage['post_parent']) && $currentPage['post_parent'] != '0') {
             // Move to parent page
@@ -453,7 +458,7 @@ class PostController extends AbstractController
                 break;
             }
         }
-        
+
         // Build the final hierarchical slug
         return '/' . implode('/', $slugParts);
     }
@@ -468,10 +473,114 @@ class PostController extends AbstractController
         if (isset($pageItem['post_name']) && !empty($pageItem['post_name'])) {
             return $pageItem['post_name'];
         }
-        
+
         // Fallback to generating slug from title
         $slugString = preg_replace('/[^A-Za-z0-9 ]/', '', $pageItem['post_title']);
         return strtolower(str_replace(' ', '-', $slugString));
+    }
+
+    /**
+     * Detect content type based on content analysis
+     * @param string $content
+     * @return string
+     */
+    protected function detectContentType(string $content): string
+    {
+        // Remove whitespace for analysis
+        $trimmedContent = trim($content);
+
+        // If content is empty, default to text
+        if (empty($trimmedContent)) {
+            return 'text';
+        }
+
+        // Check for HTML tags (excluding simple line breaks and paragraphs)
+        $htmlTags = [
+            '<div',
+            '<span',
+            '<img',
+            '<a',
+            '<ul',
+            '<ol',
+            '<li',
+            '<table',
+            '<tr',
+            '<td',
+            '<th',
+            '<h1',
+            '<h2',
+            '<h3',
+            '<h4',
+            '<h5',
+            '<h6',
+            '<strong',
+            '<em',
+            '<b',
+            '<i',
+            '<blockquote',
+            '<pre',
+            '<code',
+            '<iframe',
+            '<video',
+            '<audio',
+            '<figure',
+            '<section',
+            '<article',
+            '<header',
+            '<footer',
+            '<nav',
+            '<aside',
+            '<main'
+        ];
+
+        $lowerContent = strtolower($trimmedContent);
+
+        // Count HTML tags
+        $htmlTagCount = 0;
+        foreach ($htmlTags as $tag) {
+            $htmlTagCount += substr_count($lowerContent, $tag);
+        }
+
+        // Check for HTML entities
+        $hasHtmlEntities = preg_match('/&[a-zA-Z][a-zA-Z0-9]*;/', $trimmedContent);
+
+        // Check for complex HTML structures
+        $hasComplexHtml = (
+            strpos($lowerContent, '<div') !== false ||
+            strpos($lowerContent, '<span') !== false ||
+            strpos($lowerContent, '<img') !== false ||
+            strpos($lowerContent, '<table') !== false ||
+            strpos($lowerContent, '<ul') !== false ||
+            strpos($lowerContent, '<ol') !== false ||
+            strpos($lowerContent, 'class=') !== false ||
+            strpos($lowerContent, 'id=') !== false ||
+            strpos($lowerContent, 'style=') !== false
+        );
+
+        // Decision logic:
+        // 1. If content has complex HTML structures, use 'html'
+        // 2. If content has multiple HTML tags or HTML entities, use 'html'
+        // 3. If content only has simple formatting (p, br), check the ratio
+        if ($hasComplexHtml || $htmlTagCount > 3 || $hasHtmlEntities) {
+            return 'html';
+        }
+
+        // For simple content with only basic formatting, check the ratio of HTML to text
+        $textLength = strlen(strip_tags($trimmedContent));
+        $htmlLength = strlen($trimmedContent);
+
+        // If HTML markup is more than 10% of total content, treat as HTML
+        if ($textLength > 0 && (($htmlLength - $textLength) / $htmlLength) > 0.1) {
+            return 'html';
+        }
+
+        // Check for WordPress shortcodes or other CMS-specific markup
+        if (preg_match('/\[[\w\s="\'-]+\]/', $trimmedContent)) {
+            return 'html';
+        }
+
+        // Default to text for simple content
+        return 'text';
     }
 
     /**
@@ -504,10 +613,10 @@ class PostController extends AbstractController
             foreach ($imageTags as $img) {
                 // Get the value of the src attribute
                 $src = $img->getAttribute('src');
-                if($src) {
+                if ($src) {
                     $fileName = basename($src);
                     $folder = 'fileadmin/user_upload/';
-                    $dstFolder = Environment::getPublicPath() .'/'. $folder;
+                    $dstFolder = Environment::getPublicPath() . '/' . $folder;
                     if (!file_exists($dstFolder)) {
                         GeneralUtility::mkdir_deep($dstFolder);
                     }
@@ -541,8 +650,6 @@ class PostController extends AbstractController
             $this->logger->error($th->getMessage(), $data);
             return $htmlString;
         }
-
-
     }
 
     /**

@@ -59,5 +59,4 @@ abstract class AbstractController extends ActionController implements LoggerAwar
 
         return in_array($file['type'], $fileMimes);
     }
-
 }
