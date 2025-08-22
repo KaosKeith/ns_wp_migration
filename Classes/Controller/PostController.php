@@ -288,13 +288,12 @@ class PostController extends AbstractController
                     // post content create
                     if (isset($pageItem['post_content']) && !empty($pageItem['post_content'])) {
                         $htmlContent = $this->processPostContentHtml($pageItem, $customFileadminFolder);
-                        $contentType = $this->detectContentType($pageItem['post_content']);
                         $contentElements = [
                             'pid' => $recordId,
                             'hidden' => 0,
                             'tstamp' => time(),
                             'crdate' => time(),
-                            'CType' => $contentType,
+                            'CType' => 'textpic',
                             'bodytext' => $htmlContent,
                             'colPos' => 0,
                             'sectionIndex' => 1
@@ -483,110 +482,6 @@ class PostController extends AbstractController
     }
 
     /**
-     * Detect content type based on content analysis
-     * @param string $content
-     * @return string
-     */
-    protected function detectContentType(string $content): string
-    {
-        // Remove whitespace for analysis
-        $trimmedContent = trim($content);
-
-        // If content is empty, default to text
-        if (empty($trimmedContent)) {
-            return 'text';
-        }
-
-        // Check for HTML tags (excluding simple line breaks and paragraphs)
-        $htmlTags = [
-            '<div',
-            '<span',
-            '<img',
-            '<a',
-            '<ul',
-            '<ol',
-            '<li',
-            '<table',
-            '<tr',
-            '<td',
-            '<th',
-            '<h1',
-            '<h2',
-            '<h3',
-            '<h4',
-            '<h5',
-            '<h6',
-            '<strong',
-            '<em',
-            '<b',
-            '<i',
-            '<blockquote',
-            '<pre',
-            '<code',
-            '<iframe',
-            '<video',
-            '<audio',
-            '<figure',
-            '<section',
-            '<article',
-            '<header',
-            '<footer',
-            '<nav',
-            '<aside',
-            '<main'
-        ];
-
-        $lowerContent = strtolower($trimmedContent);
-
-        // Count HTML tags
-        $htmlTagCount = 0;
-        foreach ($htmlTags as $tag) {
-            $htmlTagCount += substr_count($lowerContent, $tag);
-        }
-
-        // Check for HTML entities
-        $hasHtmlEntities = preg_match('/&[a-zA-Z][a-zA-Z0-9]*;/', $trimmedContent);
-
-        // Check for complex HTML structures
-        $hasComplexHtml = (
-            strpos($lowerContent, '<div') !== false ||
-            strpos($lowerContent, '<span') !== false ||
-            strpos($lowerContent, '<img') !== false ||
-            strpos($lowerContent, '<table') !== false ||
-            strpos($lowerContent, '<ul') !== false ||
-            strpos($lowerContent, '<ol') !== false ||
-            strpos($lowerContent, 'class=') !== false ||
-            strpos($lowerContent, 'id=') !== false ||
-            strpos($lowerContent, 'style=') !== false
-        );
-
-        // Decision logic:
-        // 1. If content has complex HTML structures, use 'html'
-        // 2. If content has multiple HTML tags or HTML entities, use 'html'
-        // 3. If content only has simple formatting (p, br), check the ratio
-        if ($hasComplexHtml || $htmlTagCount > 3 || $hasHtmlEntities) {
-            return 'html';
-        }
-
-        // For simple content with only basic formatting, check the ratio of HTML to text
-        $textLength = strlen(strip_tags($trimmedContent));
-        $htmlLength = strlen($trimmedContent);
-
-        // If HTML markup is more than 10% of total content, treat as HTML
-        if ($textLength > 0 && (($htmlLength - $textLength) / $htmlLength) > 0.1) {
-            return 'html';
-        }
-
-        // Check for WordPress shortcodes or other CMS-specific markup
-        if (preg_match('/\[[\w\s="\'-]+\]/', $trimmedContent)) {
-            return 'html';
-        }
-
-        // Default to text for simple content
-        return 'text';
-    }
-
-    /**
      * Process data and return post types array
      * @param array $data
      * @param string $customFileadminFolder
@@ -610,87 +505,12 @@ class PostController extends AbstractController
         $dom = new DOMDocument();
         try {
             $dom->loadHTML($htmlString);
-            // Get all image tags in the HTML
-            $imageTags = $dom->getElementsByTagName('img');
 
-            // Loop through each image tag
-            foreach ($imageTags as $img) {
-                // Get the value of the src attribute
-                $src = $img->getAttribute('src');
-                if ($src) {
-                    // Parse the URL to get the path
-                    $parsedUrl = parse_url($src);
-                    $srcPath = $parsedUrl['path'] ?? '';
+            // Process images
+            $this->processMediaElements($dom, 'img', 'src', $resourceFactory, $customFileadminFolder);
 
-                    // Extract the relative path from the source URL
-                    // This preserves the directory structure
-                    $fileName = basename($srcPath);
-                    $relativePath = dirname($srcPath);
-
-                    // Clean up the relative path (remove leading slashes, etc.)
-                    $relativePath = trim($relativePath, '/');
-                    if ($relativePath === '.' || $relativePath === '') {
-                        $relativePath = '';
-                    } else {
-                        $relativePath = $relativePath . '/';
-                    }
-
-                    // Determine the folder to use - custom or default
-                    if (!empty($customFileadminFolder)) {
-                        // Clean up the custom folder path
-                        $customFolder = trim($customFileadminFolder, '/');
-                        if (!str_starts_with($customFolder, 'fileadmin/')) {
-                            $customFolder = 'fileadmin/' . $customFolder;
-                        }
-                        $baseFolder = rtrim($customFolder, '/') . '/';
-                        $folder = $baseFolder . $relativePath;
-                        $storageFolder = str_replace('fileadmin/', '', $baseFolder);
-                        $storageFolder = trim($storageFolder, '/');
-                        $storageSubFolder = $storageFolder . '/' . $relativePath;
-                        $storageSubFolder = trim($storageSubFolder, '/');
-                    } else {
-                        // Use default folder
-                        $baseFolder = 'fileadmin/user_upload/';
-                        $folder = $baseFolder . $relativePath;
-                        $storageFolder = 'user_upload';
-                        $storageSubFolder = $storageFolder . '/' . $relativePath;
-                        $storageSubFolder = trim($storageSubFolder, '/');
-                    }
-
-                    $dstFolder = Environment::getPublicPath() . '/' . $folder;
-                    if (!file_exists($dstFolder)) {
-                        GeneralUtility::mkdir_deep($dstFolder);
-                    }
-                    $out = file_get_contents($src);
-                    file_put_contents($dstFolder . $fileName, $out);
-
-                    // Get TYPO3 file storage
-                    $fileStorage = $resourceFactory->getDefaultStorage();
-
-                    // Try to get the folder, create if it doesn't exist
-                    try {
-                        $folderObject = $fileStorage->getFolder($storageSubFolder);
-                    } catch (\Exception $e) {
-                        // Create the folder structure if it doesn't exist
-                        $folderObject = $fileStorage->createFolder($storageSubFolder);
-                    }
-
-                    $fileObject = $fileStorage->getFileInFolder($fileName, $folderObject);
-                    $properties = $fileObject->getProperties();
-
-                    // Get the accessible URL of the file
-                    $accessibleUrl = $fileObject->getPublicUrl();
-                    $img->setAttribute('src', $accessibleUrl);
-                    $img->setAttribute('data-htmlarea-file-uid', $properties['uid']);
-                    $img->setAttribute('data-htmlarea-file-table', 'sys_file');
-                    $img->setAttribute('width', 930);
-                    $img->setAttribute('height', 523);
-                    $img->setAttribute('title', $properties['name']);
-                    $img->setAttribute('alt', $properties['name']);
-                    $img->setAttribute('data-title-override', 'true');
-                    $img->setAttribute('data-alt-override', 'true');
-                }
-            }
+            // Process links to files (PDFs, documents, etc.)
+            $this->processFileLinks($dom, $resourceFactory, $customFileadminFolder);
 
             // Get the modified HTML content
             $htmlString = $dom->saveHTML();
@@ -699,6 +519,184 @@ class PostController extends AbstractController
         } catch (\Throwable $th) {
             $this->logger->error($th->getMessage(), $data);
             return $htmlString;
+        }
+    }
+
+    /**
+     * Process media elements (images, videos, etc.)
+     * @param DOMDocument $dom
+     * @param string $tagName
+     * @param string $attribute
+     * @param ResourceFactory $resourceFactory
+     * @param string $customFileadminFolder
+     * @return void
+     */
+    protected function processMediaElements(DOMDocument $dom, string $tagName, string $attribute, ResourceFactory $resourceFactory, string $customFileadminFolder = ''): void
+    {
+        $elements = $dom->getElementsByTagName($tagName);
+
+        foreach ($elements as $element) {
+            $src = $element->getAttribute($attribute);
+            if ($src) {
+                $fileInfo = $this->downloadAndStoreFile($src, $resourceFactory, $customFileadminFolder);
+                if ($fileInfo) {
+                    $element->setAttribute($attribute, $fileInfo['url']);
+
+                    // Add TYPO3-specific attributes for images
+                    if ($tagName === 'img') {
+                        $element->setAttribute('data-htmlarea-file-uid', $fileInfo['uid']);
+                        $element->setAttribute('data-htmlarea-file-table', 'sys_file');
+                        $element->setAttribute('data-title-override', 'true');
+                        $element->setAttribute('data-alt-override', 'true');
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Process file links (PDFs, documents, spreadsheets, etc.)
+     * @param DOMDocument $dom
+     * @param ResourceFactory $resourceFactory
+     * @param string $customFileadminFolder
+     * @return void
+     */
+    protected function processFileLinks(DOMDocument $dom, ResourceFactory $resourceFactory, string $customFileadminFolder = ''): void
+    {
+        $links = $dom->getElementsByTagName('a');
+
+        // Define file extensions we want to process
+        $fileExtensions = [
+            'pdf',
+            'doc',
+            'docx',
+            'xls',
+            'xlsx',
+            'ppt',
+            'pptx',
+            'zip',
+            'rar',
+            'txt',
+            'rtf',
+            'odt',
+            'ods',
+            'odp',
+            'csv',
+            'xml',
+            'json',
+            'mp3',
+            'mp4',
+            'avi',
+            'mov',
+            'wmv',
+            'flv',
+            'webm',
+            'ogg',
+            'wav',
+            'wma'
+        ];
+
+        foreach ($links as $link) {
+            $href = $link->getAttribute('href');
+            if ($href) {
+                // Check if the link points to a file we want to process
+                $extension = strtolower(pathinfo(parse_url($href, PHP_URL_PATH), PATHINFO_EXTENSION));
+
+                if (in_array($extension, $fileExtensions)) {
+                    $fileInfo = $this->downloadAndStoreFile($href, $resourceFactory, $customFileadminFolder);
+                    if ($fileInfo) {
+                        $link->setAttribute('href', $fileInfo['url']);
+
+                        // Add TYPO3-specific attributes for file links
+                        $link->setAttribute('data-htmlarea-file-uid', $fileInfo['uid']);
+                        $link->setAttribute('data-htmlarea-file-table', 'sys_file');
+
+                        // If the link text is the same as the URL, update it to the filename
+                        if ($link->textContent === $href) {
+                            $link->textContent = $fileInfo['name'];
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Get file information from existing files in fileadmin (assumes files are pre-prepared)
+     * @param string $url Original URL from WordPress content (used to determine file path structure)
+     * @param ResourceFactory $resourceFactory
+     * @param string $customFileadminFolder
+     * @return array|null Returns file info if found, null if file doesn't exist
+     */
+    protected function downloadAndStoreFile(string $url, ResourceFactory $resourceFactory, string $customFileadminFolder = ''): ?array
+    {
+        try {
+            // Parse the URL to get the path
+            $parsedUrl = parse_url($url);
+            $srcPath = $parsedUrl['path'] ?? '';
+
+            // Extract the relative path from the source URL
+            // This preserves the directory structure
+            $fileName = basename($srcPath);
+            $relativePath = dirname($srcPath);
+
+            // Clean up the relative path (remove leading slashes, etc.)
+            $relativePath = trim($relativePath, '/');
+            if ($relativePath === '.' || $relativePath === '') {
+                $relativePath = '';
+            } else {
+                $relativePath = $relativePath . '/';
+            }
+
+            // Determine the folder to use - custom or default
+            if (!empty($customFileadminFolder)) {
+                // Clean up the custom folder path
+                $customFolder = trim($customFileadminFolder, '/');
+                if (!str_starts_with($customFolder, 'fileadmin/')) {
+                    $customFolder = 'fileadmin/' . $customFolder;
+                }
+                $baseFolder = rtrim($customFolder, '/') . '/';
+                $storageFolder = str_replace('fileadmin/', '', $baseFolder);
+                $storageFolder = trim($storageFolder, '/');
+                $storageSubFolder = $storageFolder . '/' . $relativePath;
+                $storageSubFolder = trim($storageSubFolder, '/');
+            } else {
+                // Use default folder
+                $baseFolder = 'fileadmin/user_upload/';
+                $storageFolder = 'user_upload';
+                $storageSubFolder = $storageFolder . '/' . $relativePath;
+                $storageSubFolder = trim($storageSubFolder, '/');
+            }
+
+            // Get TYPO3 file storage
+            $fileStorage = $resourceFactory->getDefaultStorage();
+
+            // Try to get the folder and file (assume they already exist)
+            try {
+                $folderObject = $fileStorage->getFolder($storageSubFolder);
+                $fileObject = $fileStorage->getFileInFolder($fileName, $folderObject);
+                $properties = $fileObject->getProperties();
+
+                return [
+                    'url' => $fileObject->getPublicUrl(),
+                    'uid' => $properties['uid'],
+                    'name' => $properties['name']
+                ];
+            } catch (\Exception $e) {
+                // File or folder doesn't exist - log warning and return null
+                $this->logger->warning('File not found in fileadmin (assuming pre-prepared files): ' . $fileName, [
+                    'expected_path' => $storageSubFolder . '/' . $fileName,
+                    'original_url' => $url,
+                    'error' => $e->getMessage()
+                ]);
+                return null;
+            }
+        } catch (\Throwable $e) {
+            $this->logger->error('Failed to locate file in fileadmin: ' . $url, [
+                'error' => $e->getMessage(),
+                'url' => $url
+            ]);
+            return null;
         }
     }
 
