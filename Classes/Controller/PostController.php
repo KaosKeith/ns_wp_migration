@@ -501,10 +501,12 @@ class PostController extends AbstractController
         $htmlString = $purifier->purify(trim($data['post_content']));
         $resourceFactory = GeneralUtility::makeInstance(ResourceFactory::class);
 
-        // Create a DOMDocument object
-        $dom = new DOMDocument();
+        // Create a DOMDocument object with proper UTF-8 encoding
+        $dom = new DOMDocument('1.0', 'UTF-8');
         try {
-            $dom->loadHTML($htmlString);
+            // Ensure proper UTF-8 handling by adding meta charset and using mb_convert_encoding
+            $htmlString = mb_convert_encoding($htmlString, 'HTML-ENTITIES', 'UTF-8');
+            $dom->loadHTML('<?xml encoding="UTF-8">' . $htmlString, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
 
             // Process images
             $this->processMediaElements($dom, 'img', 'src', $resourceFactory, $customFileadminFolder);
@@ -512,8 +514,10 @@ class PostController extends AbstractController
             // Process links to files (PDFs, documents, etc.)
             $this->processFileLinks($dom, $resourceFactory, $customFileadminFolder);
 
-            // Get the modified HTML content
+            // Get the modified HTML content with proper UTF-8 encoding
             $htmlString = $dom->saveHTML();
+            // Remove the XML encoding declaration that was added for UTF-8 support
+            $htmlString = preg_replace('/^<!DOCTYPE.+?>/', '', str_replace('<?xml encoding="UTF-8">', '', $htmlString));
             $htmlString = $purifier->purify($htmlString);
             return $htmlString;
         } catch (\Throwable $th) {
