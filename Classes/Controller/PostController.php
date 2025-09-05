@@ -288,20 +288,51 @@ class PostController extends AbstractController
                         $wpIdToTypo3IdMap[$pageItem['ID']] = $recordId;
                     }
 
-                    // post content create
+                    // post content create - handle YouTube embeds by splitting content
                     if (isset($pageItem['post_content']) && !empty($pageItem['post_content'])) {
                         $htmlContent = $this->processPostContentHtml($pageItem, $customFileadminFolder);
-                        $contentElements = [
-                            'pid' => $recordId,
-                            'hidden' => 0,
-                            'tstamp' => time(),
-                            'crdate' => time(),
-                            'CType' => 'textpic',
-                            'bodytext' => $htmlContent,
-                            'colPos' => 1,
-                            'sectionIndex' => 1
-                        ];
-                        $this->contentRepository->insertContnetElements($contentElements);
+                        $contentSegments = $this->splitContentByIframes($htmlContent);
+
+                        $sorting = 100; // Start sorting at 100, increment by 100 for each element
+                        $this->logger->info('content segments: ' . var_export($contentSegments, true));
+
+                        foreach ($contentSegments as $segment) {
+                            if ($segment['type'] === 'iframe') {
+                                // Create HTML content element for iframe
+                                $contentElements = [
+                                    'pid' => $recordId,
+                                    'hidden' => 0,
+                                    'tstamp' => time(),
+                                    'crdate' => time(),
+                                    'CType' => 'html',
+                                    'bodytext' => $segment['content'],
+                                    'colPos' => 1,
+                                    'sectionIndex' => 1,
+                                    'sorting' => $sorting
+                                ];
+                            } else {
+                                // Create textpic content element for regular content
+                                $contentElements = [
+                                    'pid' => $recordId,
+                                    'hidden' => 0,
+                                    'tstamp' => time(),
+                                    'crdate' => time(),
+                                    'CType' => 'textpic',
+                                    'bodytext' => $segment['content'],
+                                    'colPos' => 1,
+                                    'sectionIndex' => 1,
+                                    'sorting' => $sorting
+                                ];
+                            }
+
+                            // Only create content element if there's actual content
+                            // For iframe segments, check the content directly since strip_tags would remove the iframe
+                            if ($segment['type'] === 'iframe' || !empty(trim(strip_tags($segment['content'])))) {
+                                $this->contentRepository->insertContnetElements($contentElements);
+                            }
+
+                            $sorting += 100; // Increment sorting for next element
+                        }
                     }
                 }
             } else {
@@ -665,6 +696,8 @@ class PostController extends AbstractController
     public function processPostContentHtml(array $data, string $customFileadminFolder = ''): string
     {
         $config = HTMLPurifier_Config::createDefault();
+        $config->set('HTML.SafeIframe', true);
+        $config->set('URI.SafeIframeRegexp', '%^(https?:)?//(www\.youtube(?:-nocookie)?\.com/embed/|player\.vimeo\.com/video/)%');
         $config->set('AutoFormat.RemoveEmpty', true); // remove empty tag pairs
         $config->set('AutoFormat.RemoveEmpty.RemoveNbsp', true); // remove empty, even if it contains an &nbsp;
         $config->set('AutoFormat.AutoParagraph', false); // remove empty tag pairs
@@ -1035,6 +1068,105 @@ class PostController extends AbstractController
                 'error' => $e->getMessage()
             ]);
         }
+    }
+
+    /**
+     * Split HTML content by iframe elements to create separate content elements
+     * @param string $htmlContent
+     * @return array Array of content segments with type and content
+     */
+    protected function splitContentByIframes(string $htmlContent): array
+    {
+        $this->logger->info('splitting content by iframe');
+        $segments = [];
+
+        if (empty($htmlContent)) {
+            return $segments;
+        }
+
+        try {
+            // Create a DOMDocument to parse the HTML
+            $dom = new DOMDocument('1.0', 'UTF-8');
+            $dom->preserveWhiteSpace = false;
+            $dom->formatOutput = false;
+
+            // Load HTML with proper UTF-8 handling
+            $htmlContent = mb_convert_encoding($htmlContent, 'HTML-ENTITIES', 'UTF-8');
+            $dom->loadHTML('<?xml encoding="UTF-8">' . $htmlContent, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+
+            // Get all iframe elements
+            $iframes = $dom->getElementsByTagName('iframe');
+
+            if ($iframes->length === 0) {
+                // No iframes found, return the entire content as a single text segment
+                $this->logger->info('no iframes found');
+                $segments[] = [
+                    'type' => 'text',
+                    'content' => $htmlContent
+                ];
+                return $segments;
+            }
+
+            // Convert NodeList to array for easier manipulation
+            $iframeNodes = [];
+            foreach ($iframes as $iframe) {
+                $iframeNodes[] = $iframe;
+            }
+
+            // Split content by extracting text before each iframe and the iframe itself
+            $currentContent = $htmlContent;
+
+            foreach ($iframeNodes as $iframe) {
+                // Get the iframe HTML
+                $iframeHtml = $dom->saveHTML($iframe);
+
+                // Find the position of this iframe in the current content
+                $iframePos = strpos($currentContent, $iframeHtml);
+
+                if ($iframePos !== false) {
+                    // Extract content before the iframe
+                    $beforeContent = substr($currentContent, 0, $iframePos);
+
+                    // Add text segment if there's content before the iframe
+                    if (!empty(trim(strip_tags($beforeContent)))) {
+                        $segments[] = [
+                            'type' => 'text',
+                            'content' => trim($beforeContent)
+                        ];
+                    }
+
+                    // Add iframe segment
+                    $segments[] = [
+                        'type' => 'iframe',
+                        'content' => $iframeHtml
+                    ];
+
+                    // Update current content to everything after this iframe
+                    $currentContent = substr($currentContent, $iframePos + strlen($iframeHtml));
+                }
+            }
+
+            // Add any remaining content after the last iframe
+            if (!empty(trim(strip_tags($currentContent)))) {
+                $segments[] = [
+                    'type' => 'text',
+                    'content' => trim($currentContent)
+                ];
+            }
+        } catch (\Exception $e) {
+            // If parsing fails, return the entire content as a single text segment
+            $this->logger->error('Failed to split content by iframes', [
+                'error' => $e->getMessage(),
+                'content_length' => strlen($htmlContent)
+            ]);
+
+            $segments[] = [
+                'type' => 'text',
+                'content' => $htmlContent
+            ];
+        }
+
+        return $segments;
     }
 
     /**
