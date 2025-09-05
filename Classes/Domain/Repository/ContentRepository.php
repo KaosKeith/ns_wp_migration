@@ -80,7 +80,7 @@ class ContentRepository extends Repository
         $queryBuilder->getRestrictions()->removeAll();
         // Add back only the deleted restriction to exclude deleted pages
         $queryBuilder->getRestrictions()->add(GeneralUtility::makeInstance(\TYPO3\CMS\Core\Database\Query\Restriction\DeletedRestriction::class));
-        
+
         return $queryBuilder
             ->select('uid')
             ->from('pages')
@@ -109,7 +109,7 @@ class ContentRepository extends Repository
             ->set('pid', $parentId)
             ->set('tstamp', time())
             ->executeStatement();
-        
+
         return $affectedRows > 0;
     }
 
@@ -130,7 +130,7 @@ class ContentRepository extends Repository
             ->set('slug', $slug)
             ->set('tstamp', time())
             ->executeStatement();
-        
+
         return $affectedRows > 0;
     }
 
@@ -150,5 +150,129 @@ class ContentRepository extends Repository
             )
             ->executeQuery()
             ->fetchAssociative();
+    }
+
+    /**
+     * Create a news record
+     * @param array $newsData
+     * @return int
+     */
+    public function createNewsRecord(array $newsData): int
+    {
+        $queryBuilder = GeneralUtility::makeInstance(ConnectionPool::class)->getQueryBuilderForTable('tx_news_domain_model_news');
+        $queryBuilder
+            ->insert('tx_news_domain_model_news')
+            ->values($newsData)
+            ->executeStatement();
+        return (int)$queryBuilder->getConnection()->lastInsertId();
+    }
+
+    /**
+     * Update a news record
+     * @param array $newsData
+     * @param int $recordId
+     * @return int
+     */
+    public function updateNewsRecord(array $newsData, int $recordId): int
+    {
+        $queryBuilder = GeneralUtility::makeInstance(ConnectionPool::class)->getQueryBuilderForTable('tx_news_domain_model_news');
+        $queryBuilder
+            ->update('tx_news_domain_model_news')
+            ->where(
+                $queryBuilder->expr()->eq('uid', $queryBuilder->createNamedParameter($recordId, \PDO::PARAM_INT))
+            );
+
+        foreach ($newsData as $field => $value) {
+            $queryBuilder->set($field, $value);
+        }
+
+        $queryBuilder->executeStatement();
+        return $recordId;
+    }
+
+    /**
+     * Find news record by title and storage ID
+     * @param string $title
+     * @param int $storageId
+     * @return string|false
+     */
+    public function findNewsByTitle(string $title, int $storageId): string|false
+    {
+        $queryBuilder = GeneralUtility::makeInstance(ConnectionPool::class)->getQueryBuilderForTable('tx_news_domain_model_news');
+        // Remove all restrictions first
+        $queryBuilder->getRestrictions()->removeAll();
+        // Add back only the deleted restriction to exclude deleted records
+        $queryBuilder->getRestrictions()->add(GeneralUtility::makeInstance(\TYPO3\CMS\Core\Database\Query\Restriction\DeletedRestriction::class));
+
+        return $queryBuilder
+            ->select('uid')
+            ->from('tx_news_domain_model_news')
+            ->where(
+                $queryBuilder->expr()->eq('title', $queryBuilder->createNamedParameter($title)),
+                $queryBuilder->expr()->eq('pid', $queryBuilder->createNamedParameter($storageId, \PDO::PARAM_INT))
+            )
+            ->executeQuery()
+            ->fetchOne();
+    }
+
+    /**
+     * Create a news category
+     * @param array $categoryData
+     * @return int
+     */
+    public function createNewsCategory(array $categoryData): int
+    {
+        $queryBuilder = GeneralUtility::makeInstance(ConnectionPool::class)->getQueryBuilderForTable('sys_category');
+        $queryBuilder
+            ->insert('sys_category')
+            ->values($categoryData)
+            ->executeStatement();
+        return (int)$queryBuilder->getConnection()->lastInsertId();
+    }
+
+    /**
+     * Find category by title and parent
+     * @param string $title
+     * @param int $parentId
+     * @return string|false
+     */
+    public function findCategoryByTitle(string $title, int $parentId = 0): string|false
+    {
+        $queryBuilder = GeneralUtility::makeInstance(ConnectionPool::class)->getQueryBuilderForTable('sys_category');
+        $queryBuilder->getRestrictions()->removeAll();
+        $queryBuilder->getRestrictions()->add(GeneralUtility::makeInstance(\TYPO3\CMS\Core\Database\Query\Restriction\DeletedRestriction::class));
+
+        return $queryBuilder
+            ->select('uid')
+            ->from('sys_category')
+            ->where(
+                $queryBuilder->expr()->eq('title', $queryBuilder->createNamedParameter($title)),
+                $queryBuilder->expr()->eq('parent', $queryBuilder->createNamedParameter($parentId, \PDO::PARAM_INT))
+            )
+            ->executeQuery()
+            ->fetchOne();
+    }
+
+    /**
+     * Create news-category relation
+     * @param int $newsId
+     * @param int $categoryId
+     * @return void
+     */
+    public function createNewsCategoryRelation(int $newsId, int $categoryId): void
+    {
+        $relationData = [
+            'uid_local' => $categoryId,
+            'uid_foreign' => $newsId,
+            'tablenames' => 'tx_news_domain_model_news',
+            'fieldname' => 'categories',
+            'sorting_foreign' => 1
+        ];
+
+        $queryBuilder = GeneralUtility::makeInstance(ConnectionPool::class)->getQueryBuilderForTable('sys_category_record_mm');
+        $queryBuilder
+            ->insert('sys_category_record_mm')
+            ->values($relationData)
+            ->executeStatement();
     }
 }

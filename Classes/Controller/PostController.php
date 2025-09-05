@@ -184,7 +184,11 @@ class PostController extends AbstractController
             }
 
             if (is_array($data) && isset($data[1], $data[1]['post_title'], $data[1]['post_type'])) {
-                $this->createPagesAndBlog($data, $storageId, $dockType, $customFileadminFolder);
+                if ($dockType === 'news') {
+                    $this->createNews($data, $storageId, $customFileadminFolder);
+                } else {
+                    $this->createPages($data, $storageId, $customFileadminFolder);
+                }
                 return 1;
             } else {
                 $massage = LocalizationUtility::translate('error.invalidfileData', 'ns_wp_migration');
@@ -210,11 +214,10 @@ class PostController extends AbstractController
      * Create pages for sites
      * @param array $data
      * @param int $storageId
-     * @param string $dockType
      * @param string $customFileadminFolder
      * @return array
      */
-    public function createPagesAndBlog(array $data, int $storageId, string $dockType, string $customFileadminFolder = ''): array
+    public function createPages(array $data, int $storageId, string $customFileadminFolder = ''): array
     {
         $response = [];
         $numberOfRecords = count($data);
@@ -295,7 +298,7 @@ class PostController extends AbstractController
                             'crdate' => time(),
                             'CType' => 'textpic',
                             'bodytext' => $htmlContent,
-                            'colPos' => 0,
+                            'colPos' => 1,
                             'sectionIndex' => 1
                         ];
                         $this->contentRepository->insertContnetElements($contentElements);
@@ -324,6 +327,178 @@ class PostController extends AbstractController
         $massage = LocalizationUtility::translate('import.success', 'ns_wp_migration');
         $response['message'] = $massage;
         $response['result'] = true;
+        return $response;
+    }
+
+    /**
+     * Create news records for georgringer/news extension
+     * @param array $data
+     * @param int $storageId
+     * @param string $customFileadminFolder
+     * @return array
+     */
+    public function createNews(array $data, int $storageId, string $customFileadminFolder = ''): array
+    {
+        $response = [];
+        $numberOfRecords = count($data);
+        $success = 0;
+        $fails = 0;
+        $updatedRecords = 0;
+        $beUserId = 0;
+        $context = GeneralUtility::makeInstance(Context::class);
+        if ($context->getPropertyFromAspect('backend.user', 'id')) {
+            $beUserId = $context->getPropertyFromAspect('backend.user', 'id');
+        }
+        $beUser = $this->backendUserRepository->findByUid($beUserId);
+        $logManager = GeneralUtility::makeInstance(LogManage::class);
+        $logManager->setPid($storageId);
+        $logManager->setNumberOfRecords($numberOfRecords);
+
+        // Process each news item
+        foreach ($data as $newsItem) {
+            // Validate news item
+            if (!isset($newsItem['post_title']) || empty($newsItem['post_title'])) {
+                $fails++;
+                continue;
+            }
+
+            try {
+                // Generate slug from title or use post_name
+                $slugString = preg_replace('/[^A-Za-z0-9 ]/', '', $newsItem['post_title']);
+                $slug = strtolower(str_replace(' ', '-', $slugString));
+                if (isset($newsItem['post_name']) && !empty($newsItem['post_name'])) {
+                    $slug = $newsItem['post_name'];
+                }
+
+                // Parse and format date
+                $formattedDate = time(); // Default to current time
+                if (isset($newsItem['post_date']) && !empty($newsItem['post_date'])) {
+                    $postDate = explode(" ", $newsItem['post_date']);
+                    if (isset($postDate[0])) {
+                        $date = \DateTime::createFromFormat('d/m/y', $postDate[0]);
+                        if (!$date) {
+                            // Try alternative date formats
+                            $date = \DateTime::createFromFormat('Y-m-d', $postDate[0]);
+                            if (!$date) {
+                                $date = \DateTime::createFromFormat('m/d/Y', $postDate[0]);
+                            }
+                        }
+                        if ($date) {
+                            $formattedDate = $date->getTimestamp();
+                        }
+                    }
+                }
+
+                // Prepare news data
+                $newsData = [
+                    'pid' => $storageId,
+                    'title' => $newsItem['post_title'],
+                    'path_segment' => $slug,
+                    'datetime' => $formattedDate,
+                    'tstamp' => time(),
+                    'crdate' => time(),
+                    'cruser_id' => $beUserId,
+                    'sys_language_uid' => 0,
+                    'l10n_parent' => 0,
+                    'starttime' => 0,
+                    'endtime' => 0,
+                    'fe_group' => '',
+                    'hidden' => 0,
+                    'deleted' => 0,
+                    'archive' => $formattedDate,
+                    'author' => isset($newsItem['post_author']) ? $newsItem['post_author'] : '',
+                    'author_email' => isset($newsItem['author_email']) ? $newsItem['author_email'] : '',
+                    'keywords' => isset($newsItem['post_excerpt']) ? $newsItem['post_excerpt'] : '',
+                    'description' => isset($newsItem['post_excerpt']) ? $newsItem['post_excerpt'] : '',
+                    'alternative_title' => '',
+                    'istopnews' => 0,
+                    'content_elements' => 0,
+                    'tags' => 0,
+                    'path_segment' => $slug,
+                    'editlock' => 0,
+                    'sorting' => 0,
+                    'notes' => ''
+                ];
+
+                // Handle post status
+                if (isset($newsItem['post_status'])) {
+                    switch ($newsItem['post_status']) {
+                        case 'draft':
+                            $newsData['hidden'] = 1;
+                            break;
+                        case 'private':
+                            $newsData['hidden'] = 1;
+                            $newsData['fe_group'] = '-2'; // Hide at login
+                            break;
+                        case 'trash':
+                            $newsData['deleted'] = 1;
+                            break;
+                        case 'publish':
+                        case 'published':
+                        default:
+                            $newsData['hidden'] = 0;
+                            break;
+                    }
+                }
+
+                // Process content
+                if (isset($newsItem['post_content']) && !empty($newsItem['post_content'])) {
+                    $htmlContent = $this->processPostContentHtml($newsItem, $customFileadminFolder);
+                    $newsData['bodytext'] = $htmlContent;
+                    $newsData['teaser'] = $this->generateTeaser($htmlContent);
+                }
+
+                // Check if news already exists
+                $existingNewsId = $this->contentRepository->findNewsByTitle($newsItem['post_title'], $storageId);
+
+                if ($existingNewsId) {
+                    // Update existing news
+                    $recordId = $this->contentRepository->updateNewsRecord($newsData, (int)$existingNewsId);
+                    $updatedRecords++;
+                } else {
+                    // Create new news record
+                    $recordId = $this->contentRepository->createNewsRecord($newsData);
+                    $success++;
+                }
+
+                // Handle categories if present
+                if (isset($newsItem['categories']) && !empty($newsItem['categories']) && $recordId) {
+                    $this->processNewsCategories($newsItem['categories'], $recordId, $storageId);
+                }
+
+                // Handle tags if present
+                if (isset($newsItem['tags']) && !empty($newsItem['tags']) && $recordId) {
+                    $this->processNewsTags($newsItem['tags'], $recordId);
+                }
+            } catch (\Exception $e) {
+                $this->logger->error('Failed to create/update news record', [
+                    'title' => $newsItem['post_title'] ?? 'Unknown',
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+                $fails++;
+            }
+        }
+
+        // Update log manager
+        $logManager->setTotalSuccess($success);
+        $logManager->setTotalFails($fails);
+        $logManager->setTotalUpdate($updatedRecords);
+        $dateTime = new \DateTime(date('Y-m-d'));
+        $logManager->setCreatedDate($dateTime);
+        $logManager->setAddedBy($beUser);
+        $this->logManageRepository->add($logManager);
+
+        $persistanceManager = GeneralUtility::makeInstance(PersistenceManager::class);
+        $persistanceManager->persistAll();
+
+        $massage = LocalizationUtility::translate('import.success', 'ns_wp_migration');
+        $response['message'] = $massage;
+        $response['result'] = true;
+        $response['success'] = $success;
+        $response['fails'] = $fails;
+        $response['updated'] = $updatedRecords;
+
         return $response;
     }
 
@@ -541,6 +716,7 @@ class PostController extends AbstractController
 
         foreach ($elements as $element) {
             $src = $element->getAttribute($attribute);
+            $element->setAttribute('alt', '');
             if ($src) {
                 $fileInfo = $this->downloadAndStoreFile($src, $resourceFactory, $customFileadminFolder);
                 if ($fileInfo) {
@@ -610,6 +786,7 @@ class PostController extends AbstractController
                     $fileInfo = $this->downloadAndStoreFile($href, $resourceFactory, $customFileadminFolder);
                     if ($fileInfo) {
                         $link->setAttribute('href', $fileInfo['url']);
+                        $link->setAttribute('target', '_blank'); // Open in new tab
 
                         // Add TYPO3-specific attributes for file links
                         $link->setAttribute('data-htmlarea-file-uid', $fileInfo['uid']);
@@ -738,6 +915,126 @@ class PostController extends AbstractController
     protected function initializeModuleTemplate(ServerRequestInterface $request): ModuleTemplate
     {
         return $this->moduleTemplateFactory->create($request);
+    }
+
+    /**
+     * Generate a teaser from HTML content
+     * @param string $htmlContent
+     * @param int $maxLength
+     * @return string
+     */
+    protected function generateTeaser(string $htmlContent, int $maxLength = 200): string
+    {
+        // Strip HTML tags and decode entities
+        $plainText = html_entity_decode(strip_tags($htmlContent), ENT_QUOTES, 'UTF-8');
+
+        // Remove extra whitespace
+        $plainText = preg_replace('/\s+/', ' ', trim($plainText));
+
+        // Truncate to max length
+        if (strlen($plainText) > $maxLength) {
+            $plainText = substr($plainText, 0, $maxLength);
+            // Find the last space to avoid cutting words
+            $lastSpace = strrpos($plainText, ' ');
+            if ($lastSpace !== false) {
+                $plainText = substr($plainText, 0, $lastSpace);
+            }
+            $plainText .= '...';
+        }
+
+        return $plainText;
+    }
+
+    /**
+     * Process news categories
+     * @param string $categories Comma-separated category names
+     * @param int $newsId
+     * @param int $storageId
+     * @return void
+     */
+    protected function processNewsCategories(string $categories, int $newsId, int $storageId): void
+    {
+        if (empty($categories)) {
+            return;
+        }
+
+        $categoryNames = array_map('trim', explode(',', $categories));
+
+        foreach ($categoryNames as $categoryName) {
+            if (empty($categoryName)) {
+                continue;
+            }
+
+            try {
+                // Check if category already exists
+                $existingCategoryId = $this->contentRepository->findCategoryByTitle($categoryName, $storageId);
+
+                if ($existingCategoryId) {
+                    $categoryId = (int)$existingCategoryId;
+                } else {
+                    // Create new category
+                    $categoryData = [
+                        'pid' => $storageId,
+                        'title' => $categoryName,
+                        'parent' => $storageId,
+                        'tstamp' => time(),
+                        'crdate' => time(),
+                        'hidden' => 0,
+                        'deleted' => 0,
+                        'sys_language_uid' => 0,
+                        'l10n_parent' => 0,
+                        'sorting' => 0
+                    ];
+
+                    $categoryId = $this->contentRepository->createNewsCategory($categoryData);
+                }
+
+                // Create relation between news and category
+                if ($categoryId) {
+                    $this->contentRepository->createNewsCategoryRelation($newsId, $categoryId);
+                }
+            } catch (\Exception $e) {
+                $this->logger->error('Failed to process news category', [
+                    'category_name' => $categoryName,
+                    'news_id' => $newsId,
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+    }
+
+    /**
+     * Process news tags
+     * @param string $tags Comma-separated tag names
+     * @param int $newsId
+     * @return void
+     */
+    protected function processNewsTags(string $tags, int $newsId): void
+    {
+        if (empty($tags)) {
+            return;
+        }
+
+        // For now, we'll store tags as a simple string in the news record
+        // The georgringer/news extension has its own tag system, but this is a basic implementation
+        try {
+            $tagNames = array_map('trim', explode(',', $tags));
+            $cleanTags = array_filter($tagNames, function ($tag) {
+                return !empty($tag);
+            });
+
+            if (!empty($cleanTags)) {
+                // Update the news record with tags (stored as comma-separated string)
+                $tagsString = implode(', ', $cleanTags);
+                $this->contentRepository->updateNewsRecord(['keywords' => $tagsString], $newsId);
+            }
+        } catch (\Exception $e) {
+            $this->logger->error('Failed to process news tags', [
+                'tags' => $tags,
+                'news_id' => $newsId,
+                'error' => $e->getMessage()
+            ]);
+        }
     }
 
     /**
